@@ -3,6 +3,7 @@ package gorou
 import (
 	"fmt"
 	"path"
+	"strconv"
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
@@ -13,6 +14,7 @@ type Timeline struct {
 	*tview.TextView
 	st           *StackTrace
 	groupIx      int
+	groupIxByID  map[string]int
 	currentNumIx int
 	depth        int
 	timeline     []GoRoutines
@@ -38,6 +40,7 @@ func NewTimeline(st *StackTrace, groupBy GroupBy, pkg string, drawDetails func(*
 		TextView:     textView,
 		st:           st,
 		groupIx:      0,
+		groupIxByID:  make(map[string]int),
 		currentNumIx: 0,
 		drawDetails:  drawDetails,
 		groupBy:      groupBy,
@@ -47,13 +50,15 @@ func NewTimeline(st *StackTrace, groupBy GroupBy, pkg string, drawDetails func(*
 	switch groupBy {
 	case GroupByAge:
 		t.timeline = st.GoRoutines.ByAgeGroups()
-		for _, group := range t.timeline {
+		for i, group := range t.timeline {
 			group.ByNum()
+			t.groupIxByID[t.groupID(group)] = i
 		}
 	case GroupByReturnAddress:
 		t.timeline = st.GoRoutines.ByReturnAddress()
-		for _, group := range t.timeline {
+		for i, group := range t.timeline {
 			group.ByNum()
+			t.groupIxByID[t.groupID(group)] = i
 		}
 
 	default:
@@ -71,18 +76,15 @@ func NewTimeline(st *StackTrace, groupBy GroupBy, pkg string, drawDetails func(*
 func (t *Timeline) highlightedFunc(added, removed, remaining []string) {
 	addedGroup := withPrefix(added, "group:")
 	if len(addedGroup) > 0 {
-		for i, group := range t.timeline {
-			if addedGroup[0] == "group:"+t.groupID(group) {
-				t.groupIx = i
-				return
-			}
-		}
+		t.groupIx = t.groupIxByID[addedGroup[0]]
+		return
 	}
 
 	addedNum := withPrefix(added, "num:")
 	if len(addedNum) > 0 {
+		grNum, _ := strconv.ParseInt(addedNum[0], 10, 64)
 		for i, gr := range t.timeline[t.groupIx] {
-			if addedNum[0] == fmt.Sprintf("num:%d", gr.Num) {
+			if grNum == gr.Num {
 				t.currentNumIx = i
 				t.drawDetails(gr)
 				return
@@ -145,7 +147,7 @@ func withPrefix(s []string, prefix string) []string {
 	ret := []string{}
 	for _, e := range s {
 		if strings.HasPrefix(e, prefix) {
-			ret = append(ret, e)
+			ret = append(ret, strings.TrimPrefix(e, prefix))
 		}
 	}
 	return ret
