@@ -26,13 +26,17 @@ var cfg = struct {
 }
 
 func main() {
-	var traceFile string
-	var age bool
+	var (
+		traceFile     string
+		age           bool
+		returnAddress bool
+	)
 	kingpin.Flag("dir", "Map file paths").Short('d').SetValue(&cfg.Dirs)
 	kingpin.Flag("filter", "Exclude stacks missing value").Short('f').SetValue(&cfg.Filters)
 	kingpin.Flag("exclude", "Exclude stacks with value").Short('x').SetValue(&cfg.Excludes)
 	kingpin.Flag("pkg", "Package to focus").Short('p').SetValue(&cfg.Pkg)
-	kingpin.Flag("age", "Display goroutines grouped by age").BoolVar(&age)
+	kingpin.Flag("age", "Display goroutines grouped by age").Short('a').BoolVar(&age)
+	kingpin.Flag("return-address", "Display goroutines grouped by return addresses").Short('r').BoolVar(&returnAddress)
 	kingpin.Flag("ancestor-frames", "Limit frames for each ancestor").Short('A').SetValue(&cfg.AncestorFrames)
 	kingpin.Arg("TRACE FILE", "Path to trace file").Required().StringVar(&traceFile)
 	kingpin.Parse()
@@ -54,7 +58,18 @@ func main() {
 		SetDynamicColors(true).SetWrap(false).SetRegions(true)
 	bottomText.SetBorder(true)
 
-	tree := gorou.NewTimeline(st, age, cfg.Pkg.Value, func(gr *gorou.GoRoutine) {
+	groupBy := gorou.GroupByNone
+	if age {
+		groupBy = gorou.GroupByAge
+	}
+	if returnAddress {
+		if groupBy != gorou.GroupByNone {
+			fmt.Fprintln(os.Stderr, "More than one grouping method specified")
+			os.Exit(1)
+		}
+		groupBy = gorou.GroupByReturnAddress
+	}
+	tree := gorou.NewTimeline(st, groupBy, cfg.Pkg.Value, func(gr *gorou.GoRoutine) {
 		drawStack(gr, topText, cfg.Filters.Slice())
 		drawAncestors(gr, bottomText, cfg.AncestorFrames.Value, cfg.Filters.Slice())
 	})
@@ -90,16 +105,6 @@ func main() {
 	}
 }
 
-func withPrefix(s []string, prefix string) []string {
-	ret := []string{}
-	for _, e := range s {
-		if strings.HasPrefix(e, prefix) {
-			ret = append(ret, e)
-		}
-	}
-	return ret
-}
-
 func noErr(err error, context string) {
 	if err != nil {
 		log.Print(context)
@@ -120,7 +125,7 @@ func drawStack(gr *gorou.GoRoutine, panel *tview.TextView, filters []string) {
 			msg = strings.ReplaceAll(msg, filter, `["`+filter+`"]`+filter+`[""]`)
 		}
 
-		fmt.Fprintf(panel, msg)
+		fmt.Fprint(panel, msg)
 	}
 	for _, filter := range filters {
 		panel.Highlight(filter)
@@ -147,7 +152,7 @@ func drawAncestors(gr *gorou.GoRoutine, panel *tview.TextView, frames int, filte
 				msg = strings.ReplaceAll(msg, filter, `["`+filter+`"]`+filter+`[""]`)
 			}
 
-			fmt.Fprintf(panel, msg)
+			fmt.Fprint(panel, msg)
 		}
 	}
 	for _, filter := range filters {
