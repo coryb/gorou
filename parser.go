@@ -2,6 +2,7 @@ package gorou
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"regexp"
@@ -22,11 +23,13 @@ var (
 )
 
 type GoRoutine struct {
-	Num      int64
-	Status   string
-	Age      time.Duration
-	Stack    Frames
-	Ancestor *GoRoutine
+	Num                   int64
+	Status                string
+	Age                   time.Duration
+	AllReturnAddresses    string
+	AllReturnAddressesSHA string
+	Stack                 Frames
+	Ancestor              *GoRoutine
 }
 
 func (gr *GoRoutine) String() string {
@@ -110,6 +113,28 @@ func (grs GoRoutines) ByNum() GoRoutines {
 	return grs
 }
 
+func (grs GoRoutines) ByReturnAddress() []GoRoutines {
+	ret := []GoRoutines{}
+	sort.Slice(grs, func(i, j int) bool {
+		return grs[i].AllReturnAddresses < grs[j].AllReturnAddresses
+	})
+
+	cursor := -1
+	var lastAllReturnAddresses *string
+	for _, gr := range grs {
+		if lastAllReturnAddresses == nil || gr.AllReturnAddresses != *lastAllReturnAddresses {
+			cursor++
+			lastAllReturnAddresses = &gr.AllReturnAddresses
+		}
+		if len(ret) == cursor {
+			ret = append(ret, GoRoutines{})
+		}
+		ret[cursor] = append(ret[cursor], gr)
+	}
+
+	return ret
+}
+
 func (grs GoRoutines) ByStatus() map[string]GoRoutines {
 	ret := map[string]GoRoutines{}
 	for _, gr := range grs {
@@ -175,6 +200,12 @@ func NewStackTrace(fileName string, filters, excludes []string) (*StackTrace, er
 				Num:    num,
 				Status: m[2],
 			}
+			if len(st.GoRoutines) != 0 {
+				lastGR := st.GoRoutines[len(st.GoRoutines)-1]
+				h := sha256.New()
+				h.Write([]byte(lastGR.AllReturnAddresses))
+				lastGR.AllReturnAddressesSHA = fmt.Sprintf("%x", h.Sum(nil))
+			}
 			st.GoRoutines = append(st.GoRoutines, cursor)
 			if m[3] != "" {
 				cursor.Age, err = time.ParseDuration(strings.ReplaceAll(m[3], " minutes", "m"))
@@ -229,6 +260,7 @@ func NewStackTrace(fileName string, filters, excludes []string) (*StackTrace, er
 				return nil, fmt.Errorf("Failed to parse %s: %w", m[2], err)
 			}
 			cursor.Stack[len(cursor.Stack)-1].Line = num
+			cursor.AllReturnAddresses += fmt.Sprintf("%s:%d\n", m[1], num)
 			continue
 		}
 		if m := ancestorRx.FindStringSubmatch(line); m != nil {

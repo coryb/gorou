@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"path"
 	"strings"
-	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -12,72 +11,77 @@ import (
 
 type Timeline struct {
 	*tview.TextView
-	st            *StackTrace
-	times         []time.Duration
-	currentTimeIx int
-	currentNumIx  int
-	depth         int
-	timeline      []GoRoutines
-	drawDetails   func(*GoRoutine)
-	byAge         bool
-	pkg           string
+	st           *StackTrace
+	groupIx      int
+	currentNumIx int
+	depth        int
+	timeline     []GoRoutines
+	drawDetails  func(*GoRoutine)
+	groupBy      GroupBy
+	pkg          string
 }
 
-func NewTimeline(st *StackTrace, byAge bool, pkg string, drawDetails func(*GoRoutine)) *Timeline {
+type GroupBy int
+
+const (
+	GroupByNone GroupBy = iota
+	GroupByAge
+	GroupByReturnAddress
+)
+
+func NewTimeline(st *StackTrace, groupBy GroupBy, pkg string, drawDetails func(*GoRoutine)) *Timeline {
 	textView := tview.NewTextView().
 		SetDynamicColors(true).
 		SetRegions(true)
 	textView.SetBorder(true)
-	depth := 0
-	var timeline []GoRoutines
-	times := []time.Duration{}
-	if byAge {
-		timeline = st.GoRoutines.ByAgeGroups()
-		for _, group := range timeline {
-			times = append(times, group[0].Age)
+	t := &Timeline{
+		TextView:     textView,
+		st:           st,
+		groupIx:      0,
+		currentNumIx: 0,
+		drawDetails:  drawDetails,
+		groupBy:      groupBy,
+		pkg:          pkg,
+	}
+
+	switch groupBy {
+	case GroupByAge:
+		t.timeline = st.GoRoutines.ByAgeGroups()
+		for _, group := range t.timeline {
 			group.ByNum()
 		}
-	} else {
-		depth = 1
-		timeline = []GoRoutines{
+	case GroupByReturnAddress:
+		t.timeline = st.GoRoutines.ByReturnAddress()
+		for _, group := range t.timeline {
+			group.ByNum()
+		}
+
+	default:
+		t.depth = 1
+		t.timeline = []GoRoutines{
 			st.GoRoutines.ByAgeNum(),
 		}
 	}
 
-	t := &Timeline{
-		TextView:      textView,
-		st:            st,
-		times:         times,
-		currentTimeIx: 0,
-		currentNumIx:  -1,
-		depth:         depth,
-		timeline:      timeline,
-		drawDetails:   drawDetails,
-		byAge:         byAge,
-		pkg:           pkg,
-	}
 	textView.SetHighlightedFunc(t.highlightedFunc)
-	if byAge && len(times) > 0 {
-		t.Highlight("age:" + times[0].String())
-	} else if len(timeline) > 0 && len(timeline[0]) > 0 {
-		t.Highlight(fmt.Sprintf("num:%d", timeline[0][0].Num))
-	}
+	t.highlight()
 	return t
 }
 
 func (t *Timeline) highlightedFunc(added, removed, remaining []string) {
-	addedAge := withPrefix(added, "age:")
-	if len(addedAge) > 0 {
-		for i, age := range t.times {
-			if addedAge[0] == "age:"+age.String() {
-				t.currentTimeIx = i
+	addedGroup := withPrefix(added, "group:")
+	if len(addedGroup) > 0 {
+		for i, group := range t.timeline {
+			if addedGroup[0] == "group:"+t.groupID(group) {
+				t.groupIx = i
 				return
 			}
 		}
 	}
+
 	addedNum := withPrefix(added, "num:")
 	if len(addedNum) > 0 {
-		for i, gr := range t.timeline[t.currentTimeIx] {
+		for i, gr := range t.timeline[t.groupIx] {
 			if addedNum[0] == fmt.Sprintf("num:%d", gr.Num) {
 				t.currentNumIx = i
 				t.drawDetails(gr)
@@ -90,7 +94,7 @@ func (t *Timeline) highlightedFunc(added, removed, remaining []string) {
 func (t *Timeline) Draw(screen tcell.Screen) {
 	t.TextView.Clear()
 	if t.depth > 0 {
-		for _, gr := range t.timeline[t.currentTimeIx] {
+		for _, gr := range t.timeline[t.groupIx] {
 			f := gr.Stack.First()
 			if t.pkg != "" {
 				for _, fr := range gr.Stack {
@@ -100,19 +104,41 @@ func (t *Timeline) Draw(screen tcell.Screen) {
 					}
 				}
 			}
-			if t.byAge {
+			switch t.groupBy {
+			case GroupByAge, GroupByReturnAddress:
 				fmt.Fprintf(t, `➤ [red]["num:%d"]%-9d["-"][-] [::b]%s[::-] [purple]%s[-].[blue]%s[-]`+"\n", gr.Num, gr.Num, gr.Status, path.Base(f.Package), f.Function)
-			} else {
+			default:
 				fmt.Fprintf(t, `➤ [red]["num:%d"]%-9d["-"][-] [::b]%s[::-] [yellow]%s[-] [purple]%s[-].[blue]%s[-]`+"\n", gr.Num, gr.Num, gr.Status, gr.Age, path.Base(f.Package), f.Function)
 			}
 		}
 	} else {
 		for _, group := range t.timeline {
-			age := group[0].Age.String()
-			fmt.Fprintf(t, `➤ ["age:%s"]%s[""] (%d)`+"\n", age, age, len(group))
+			fmt.Fprintf(t, `➤ ["group:%s"]%s[""] (%d)`+"\n", t.groupID(group), t.groupLabel(group), len(group))
 		}
 	}
 	t.TextView.Draw(screen)
+}
+
+func (t *Timeline) groupID(group GoRoutines) string {
+	switch t.groupBy {
+	case GroupByAge:
+		return group[0].Age.String()
+	case GroupByReturnAddress:
+		return group[0].AllReturnAddressesSHA
+	default:
+		return ""
+	}
+}
+
+func (t *Timeline) groupLabel(group GoRoutines) string {
+	switch t.groupBy {
+	case GroupByAge:
+		return group[0].Age.String()
+	case GroupByReturnAddress:
+		return fmt.Sprintf("%s %s", group[0].Stack.First().Function, "foo")
+	default:
+		return ""
+	}
 }
 
 func withPrefix(s []string, prefix string) []string {
@@ -125,28 +151,42 @@ func withPrefix(s []string, prefix string) []string {
 	return ret
 }
 
+func (t *Timeline) highlight() {
+	if t.groupIx >= len(t.timeline) {
+		return
+	}
+	switch t.depth {
+	case 0:
+		t.TextView.Highlight("group:" + t.groupID(t.timeline[t.groupIx]))
+	case 1:
+		if t.currentNumIx >= 0 && t.currentNumIx < len(t.timeline[t.groupIx]) {
+			t.TextView.Highlight(fmt.Sprintf("num:%d", t.timeline[t.groupIx][t.currentNumIx].Num))
+		}
+	}
+}
+
 func (t *Timeline) InputHandler() func(event *tcell.EventKey, setFocus func(p tview.Primitive)) {
 	return t.WrapInputHandler(func(event *tcell.EventKey, setFocus func(p tview.Primitive)) {
 		if t.depth == 0 {
 			switch event.Key() {
 			case tcell.KeyUp:
-				if t.currentTimeIx > 0 {
+				if t.groupIx > 0 {
 					// toggle old one + new one
-					t.TextView.Highlight("age:" + t.times[t.currentTimeIx].String())
-					t.currentTimeIx--
-					t.TextView.Highlight("age:" + t.times[t.currentTimeIx].String())
+					t.highlight()
+					t.groupIx--
+					t.highlight()
 				}
 			case tcell.KeyDown:
-				if t.currentTimeIx < len(t.times)-1 {
+				if t.groupIx < len(t.timeline)-1 {
 					// toggle old one + new one
-					t.TextView.Highlight("age:" + t.times[t.currentTimeIx].String())
-					t.currentTimeIx++
-					t.TextView.Highlight("age:" + t.times[t.currentTimeIx].String())
+					t.highlight()
+					t.groupIx++
+					t.highlight()
 				}
 			case tcell.KeyEnter, tcell.KeyRight:
 				t.depth = 1
 				t.currentNumIx = 0
-				gr := t.timeline[t.currentTimeIx][t.currentNumIx]
+				gr := t.timeline[t.groupIx][t.currentNumIx]
 				t.Highlight(fmt.Sprintf("num:%d", gr.Num))
 				t.ScrollToHighlight()
 			}
@@ -155,22 +195,22 @@ func (t *Timeline) InputHandler() func(event *tcell.EventKey, setFocus func(p tv
 			case tcell.KeyUp:
 				if t.currentNumIx > 0 {
 					// toggle old one + new one
-					t.TextView.Highlight(fmt.Sprintf("num:%d", t.timeline[t.currentTimeIx][t.currentNumIx].Num))
+					t.highlight()
 					t.currentNumIx--
-					t.TextView.Highlight(fmt.Sprintf("num:%d", t.timeline[t.currentTimeIx][t.currentNumIx].Num))
+					t.highlight()
 				}
 			case tcell.KeyDown:
-				if t.currentNumIx < len(t.timeline[t.currentTimeIx])-1 {
+				if t.currentNumIx < len(t.timeline[t.groupIx])-1 {
 					// toggle old one + new one
-					t.TextView.Highlight(fmt.Sprintf("num:%d", t.timeline[t.currentTimeIx][t.currentNumIx].Num))
+					t.highlight()
 					t.currentNumIx++
-					t.TextView.Highlight(fmt.Sprintf("num:%d", t.timeline[t.currentTimeIx][t.currentNumIx].Num))
+					t.highlight()
 				}
 			case tcell.KeyLeft:
-				if t.byAge {
+				if t.groupBy > GroupByNone {
 					t.depth = 0
 					t.currentNumIx = -1
-					t.TextView.Highlight("age:" + t.times[t.currentTimeIx].String())
+					t.highlight()
 					t.ScrollToHighlight()
 					t.drawDetails(nil)
 				}
@@ -187,7 +227,7 @@ func (t *Timeline) MouseHandler() func(action tview.MouseAction, event *tcell.Ev
 			t.depth = 1
 			if t.currentNumIx == -1 {
 				t.currentNumIx = 0
-				gr := t.timeline[t.currentTimeIx][t.currentNumIx]
+				gr := t.timeline[t.groupIx][t.currentNumIx]
 				t.Highlight(fmt.Sprintf("num:%d", gr.Num))
 				t.ScrollToHighlight()
 			}
