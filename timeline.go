@@ -20,9 +20,10 @@ type Timeline struct {
 	timeline      []GoRoutines
 	drawDetails   func(*GoRoutine)
 	byAge         bool
+	pkg           string
 }
 
-func NewTimeline(st *StackTrace, byAge bool, drawDetails func(*GoRoutine)) *Timeline {
+func NewTimeline(st *StackTrace, byAge bool, pkg string, drawDetails func(*GoRoutine)) *Timeline {
 	textView := tview.NewTextView().
 		SetDynamicColors(true).
 		SetRegions(true)
@@ -53,6 +54,7 @@ func NewTimeline(st *StackTrace, byAge bool, drawDetails func(*GoRoutine)) *Time
 		timeline:      timeline,
 		drawDetails:   drawDetails,
 		byAge:         byAge,
+		pkg:           pkg,
 	}
 	textView.SetHighlightedFunc(t.highlightedFunc)
 	if byAge && len(times) > 0 {
@@ -90,6 +92,14 @@ func (t *Timeline) Draw(screen tcell.Screen) {
 	if t.depth > 0 {
 		for _, gr := range t.timeline[t.currentTimeIx] {
 			f := gr.Stack.First()
+			if t.pkg != "" {
+				for _, fr := range gr.Stack {
+					if strings.Contains(fr.Package, t.pkg) {
+						f = &fr
+						break
+					}
+				}
+			}
 			if t.byAge {
 				fmt.Fprintf(t, `➤ [red]["num:%d"]%-9d["-"][-] [::b]%s[::-] [purple]%s[-].[blue]%s[-]`+"\n", gr.Num, gr.Num, gr.Status, path.Base(f.Package), f.Function)
 			} else {

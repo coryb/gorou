@@ -123,7 +123,7 @@ type StackTrace struct {
 	GoRoutines  GoRoutines
 }
 
-func NewStackTrace(fileName, filter string) (*StackTrace, error) {
+func NewStackTrace(fileName string, filters, excludes []string) (*StackTrace, error) {
 	fh, err := os.Open(fileName)
 	if err != nil {
 		return nil, err
@@ -137,15 +137,21 @@ func NewStackTrace(fileName, filter string) (*StackTrace, error) {
 
 	stackBuf := []string{}
 	applyFilter := func() {
-		if filter != "" && len(st.GoRoutines) > 0 {
-			keep := false
+		if (len(filters) > 0 || len(excludes) > 0) && len(st.GoRoutines) > 0 {
 			for _, l := range stackBuf {
-				if strings.Contains(l, filter) {
-					keep = true
-					break
+				for _, filter := range filters {
+					if strings.Contains(l, filter) {
+						return
+					}
+				}
+				for _, exclude := range excludes {
+					if strings.Contains(l, exclude) {
+						st.GoRoutines = st.GoRoutines[:len(st.GoRoutines)-1]
+						return
+					}
 				}
 			}
-			if !keep {
+			if len(filters) > 0 {
 				st.GoRoutines = st.GoRoutines[:len(st.GoRoutines)-1]
 			}
 		}
