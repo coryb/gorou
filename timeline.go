@@ -186,8 +186,7 @@ func (t *Timeline) InputHandler() func(event *tcell.EventKey, setFocus func(p tv
 			case tcell.KeyEnter, tcell.KeyRight:
 				t.depth = 1
 				t.currentNumIx = 0
-				gr := t.timeline[t.groupIx][t.currentNumIx]
-				t.Highlight(fmt.Sprintf("num:%d", gr.Num))
+				t.highlight()
 				t.ScrollToHighlight()
 			}
 		} else {
@@ -227,8 +226,7 @@ func (t *Timeline) MouseHandler() func(action tview.MouseAction, event *tcell.Ev
 			t.depth = 1
 			if t.currentNumIx == -1 {
 				t.currentNumIx = 0
-				gr := t.timeline[t.groupIx][t.currentNumIx]
-				t.Highlight(fmt.Sprintf("num:%d", gr.Num))
+				t.highlight()
 				t.ScrollToHighlight()
 			}
 		}
