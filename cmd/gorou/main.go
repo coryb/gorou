@@ -7,31 +7,41 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/coryb/figtree"
 	"github.com/coryb/gorou"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
-var (
-	dirs = map[string]string{}
-)
+var cfg = struct {
+	Dirs           figtree.MapStringOption  `yaml:"dirs"`
+	Filters        figtree.ListStringOption `yaml:"filters"`
+	Excludes       figtree.ListStringOption `yaml:"excludes"`
+	Pkg            figtree.StringOption     `yaml:"pkg"`
+	AncestorFrames figtree.IntOption        `yaml:"ancestor-frames"`
+}{
+	Dirs:           figtree.MapStringOption{},
+	AncestorFrames: figtree.NewIntOption(-1),
+}
 
 func main() {
-	var traceFile, pkg string
-	var filters, excludes []string
+	var traceFile string
 	var age bool
-	ancestorFrames := -1
-	kingpin.Flag("dir", "Map file paths").Short('d').StringMapVar(&dirs)
-	kingpin.Flag("filter", "Exclude stacks missing value").Short('f').StringsVar(&filters)
-	kingpin.Flag("exclude", "Exclude stacks with value").Short('x').StringsVar(&excludes)
-	kingpin.Flag("pkg", "Package to focus").Short('p').StringVar(&pkg)
+	kingpin.Flag("dir", "Map file paths").Short('d').SetValue(&cfg.Dirs)
+	kingpin.Flag("filter", "Exclude stacks missing value").Short('f').SetValue(&cfg.Filters)
+	kingpin.Flag("exclude", "Exclude stacks with value").Short('x').SetValue(&cfg.Excludes)
+	kingpin.Flag("pkg", "Package to focus").Short('p').SetValue(&cfg.Pkg)
 	kingpin.Flag("age", "Display goroutines grouped by age").BoolVar(&age)
-	kingpin.Flag("ancestor-frames", "Limit frames for each ancestor").Short('A').IntVar(&ancestorFrames)
+	kingpin.Flag("ancestor-frames", "Limit frames for each ancestor").Short('A').SetValue(&cfg.AncestorFrames)
 	kingpin.Arg("TRACE FILE", "Path to trace file").Required().StringVar(&traceFile)
 	kingpin.Parse()
 
-	st, err := gorou.NewStackTrace(traceFile, filters, excludes)
+	fig := figtree.NewFigTree()
+	err := fig.LoadAllConfigs(".gorou.yml", &cfg)
+	noErr(err, ".gorou.yml")
+
+	st, err := gorou.NewStackTrace(traceFile, cfg.Filters.Slice(), cfg.Excludes.Slice())
 	noErr(err, traceFile)
 
 	app := tview.NewApplication()
@@ -44,9 +54,9 @@ func main() {
 		SetDynamicColors(true).SetWrap(false).SetRegions(true)
 	bottomText.SetBorder(true)
 
-	tree := gorou.NewTimeline(st, age, pkg, func(gr *gorou.GoRoutine) {
-		drawStack(gr, topText, filters)
-		drawAncestors(gr, bottomText, ancestorFrames, filters)
+	tree := gorou.NewTimeline(st, age, cfg.Pkg.Value, func(gr *gorou.GoRoutine) {
+		drawStack(gr, topText, cfg.Filters.Slice())
+		drawAncestors(gr, bottomText, cfg.AncestorFrames.Value, cfg.Filters.Slice())
 	})
 
 	focus := 0
@@ -147,9 +157,9 @@ func drawAncestors(gr *gorou.GoRoutine, panel *tview.TextView, frames int, filte
 }
 
 func filename(fn string) string {
-	for src, dest := range dirs {
+	for src, dest := range cfg.Dirs {
 		if strings.HasPrefix(fn, src) {
-			fn = filepath.Join(dest, strings.TrimPrefix(fn, src))
+			fn = filepath.Join(dest.Value, strings.TrimPrefix(fn, src))
 		}
 	}
 	if strings.HasPrefix(fn, os.Getenv("HOME")) {
