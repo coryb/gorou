@@ -175,6 +175,7 @@ func (t *Timeline) InputHandler() func(event *tcell.EventKey, setFocus func(p tv
 					t.highlight()
 					t.groupIx--
 					t.highlight()
+					t.ScrollToHighlight()
 				}
 			case tcell.KeyDown:
 				if t.groupIx < len(t.timeline)-1 {
@@ -182,6 +183,7 @@ func (t *Timeline) InputHandler() func(event *tcell.EventKey, setFocus func(p tv
 					t.highlight()
 					t.groupIx++
 					t.highlight()
+					t.ScrollToHighlight()
 				}
 			case tcell.KeyEnter, tcell.KeyRight:
 				t.depth = 1
@@ -197,6 +199,7 @@ func (t *Timeline) InputHandler() func(event *tcell.EventKey, setFocus func(p tv
 					t.highlight()
 					t.currentNumIx--
 					t.highlight()
+					t.ScrollToHighlight()
 				}
 			case tcell.KeyDown:
 				if t.currentNumIx < len(t.timeline[t.groupIx])-1 {
@@ -204,6 +207,7 @@ func (t *Timeline) InputHandler() func(event *tcell.EventKey, setFocus func(p tv
 					t.highlight()
 					t.currentNumIx++
 					t.highlight()
+					t.ScrollToHighlight()
 				}
 			case tcell.KeyLeft:
 				if t.groupBy > GroupByNone {
